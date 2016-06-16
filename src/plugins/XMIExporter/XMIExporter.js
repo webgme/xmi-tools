@@ -10,11 +10,12 @@
 define([
     'plugin/PluginConfig',
     'text!./metadata.json',
-    'plugin/PluginBase'
-], function (
-    PluginConfig,
-    pluginMetadata,
-    PluginBase) {
+    'plugin/PluginBase',
+    'common/util/xmljsonconverter',
+], function (PluginConfig,
+             pluginMetadata,
+             PluginBase,
+             converters) {
     'use strict';
 
     pluginMetadata = JSON.parse(pluginMetadata);
@@ -56,36 +57,42 @@ define([
         // Use self to access core, project, result, logger etc from PluginBase.
         // These are all instantiated at this point.
         var self = this,
-            nodeObject;
+            jsonToXml = new converters.JsonToXml(),
+            ecoreData = this.getEcoreData(this.core, this.rootNode, this.META),
+            ecoreXml = jsonToXml.convertToString({
+                'ecore:EPackage': ecoreData
+            });
 
+        self.logger.info('\necoreData\n', JSON.stringify(ecoreData, null, 2));
+        self.logger.info('\necoreXML\n', ecoreXml);
 
-        // Using the logger.
-        self.logger.debug('This is a debug message.');
-        self.logger.info('This is an info message.');
-        self.logger.warn('This is a warning message.');
-        self.logger.error('This is an error message.');
-
-        // Using the coreAPI to make changes.
-
-        nodeObject = self.activeNode;
-
-        self.core.setAttribute(nodeObject, 'name', 'My new obj');
-        self.core.setRegistry(nodeObject, 'position', {x: 70, y: 70});
-
-
-        // This will save the changes. If you don't want to save;
-        // exclude self.save and call callback directly from this scope.
-        self.save('XMIExporter updated model.')
+        self.blobClient.putFile('meta-model.ecore', ecoreXml)
+            .then(function (metaModelHash) {
+                self.result.addArtifact(metaModelHash);
+            })
             .then(function () {
                 self.result.setSuccess(true);
                 callback(null, self.result);
             })
             .catch(function (err) {
-                // Result success is false at invocation.
-                callback(null, self.result);
+                callback(err, self.result);
             });
-
     };
+
+    XMIExporter.prototype.getEcoreData = function (core, rootNode, META) {
+        var metaName = core.getAttribute(rootNode, 'name'),
+            data = {
+                '@xmi:version': '2.5.1',
+                '@xmlns:xmi': 'http://www.omg.org/XMI',
+                '@xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
+                '@xmlns:ecore': 'http://www.eclipse.org/emf/2002/Ecore',
+                '@name': metaName,
+                '@nsPrefix': metaName,
+                '@nsURI': 'http://TODO..'
+            };
+
+        return data;
+    }
 
     return XMIExporter;
 });
