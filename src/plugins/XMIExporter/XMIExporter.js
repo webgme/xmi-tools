@@ -12,11 +12,22 @@ define([
     'text!./metadata.json',
     'plugin/PluginBase',
     'common/util/xmljsonconverter',
+    'q'
 ], function (PluginConfig,
              pluginMetadata,
              PluginBase,
-             converters) {
+             converters,
+             Q) {
     'use strict';
+
+    var REF_PREFIX = '#//',
+        DATA_TYPE_MAP = {
+            string: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString',
+            float: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EFloat',
+            integer: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt',
+            boolean: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EBoolean',
+            asset: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EBoolean',
+        };
 
     pluginMetadata = JSON.parse(pluginMetadata);
 
@@ -63,13 +74,7 @@ define([
                 'ecore:EPackage': ecoreData
             });
 
-        self.logger.info('\necoreData\n', JSON.stringify(ecoreData, null, 2));
-        self.logger.info('\necoreXML\n', ecoreXml);
-
-        self.blobClient.putFile('meta-model.ecore', ecoreXml)
-            .then(function (metaModelHash) {
-                self.result.addArtifact(metaModelHash);
-            })
+        self.saveFile('meta-model.ecore', ecoreXml)
             .then(function () {
                 self.result.setSuccess(true);
                 callback(null, self.result);
@@ -79,17 +84,146 @@ define([
             });
     };
 
-    XMIExporter.prototype.getEcoreData = function (core, rootNode, META) {
-        var metaName = core.getAttribute(rootNode, 'name'),
+    XMIExporter.prototype.saveFile = function(fName, content) {
+        var self = this,
+            fs;
+
+        if (typeof window === 'undefined' && process.env.WRITE_FILES) {
+            fs = require('fs');
+            return Q.ninvoke(fs, 'writeFile', fName, content);
+        } else {
+            return self.blobClient.putFile(fName, content)
+                .then(function (metaModelHash) {
+                    self.result.addArtifact(metaModelHash);
+                });
+        }
+    }
+
+    XMIExporter.prototype.getEcoreData = function (core, rootNode, name2MetaNode) {
+        var languageName = core.getAttribute(rootNode, 'name'),
+            metaNames = Object.keys(name2MetaNode),
+            path2MetaNode = core.getAllMetaNodes(rootNode),
             data = {
-                '@xmi:version': '2.5.1',
+                '@xmi:version': '2.0.0',
                 '@xmlns:xmi': 'http://www.omg.org/XMI',
                 '@xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
                 '@xmlns:ecore': 'http://www.eclipse.org/emf/2002/Ecore',
-                '@name': metaName,
-                '@nsPrefix': metaName,
-                '@nsURI': 'http://TODO..'
-            };
+                '@name': languageName,
+                '@nsPrefix': languageName,
+                '@nsURI': 'http://TODO..',
+                eClassifiers: []
+            },
+            i;
+
+        function getAttributesData(attrs) {
+            var i,
+                attrNames = Object.keys(attrs),
+                result = [];
+
+            for (i = 0; i < attrNames.length; i += 1) {
+                result.push({
+                    '@xsi:type':'ecore:EAttribute',
+                    '@name': attrNames[i],
+                    '@eType': DATA_TYPE_MAP[attrs[attrNames[i]].type]
+                    //TODO: Deal with enums, ranges, regexps.
+                });
+            }
+
+            return result;
+        }
+
+        function getChildrenData(children) {
+            var result = [],
+                i,
+                childName;
+
+            for (i = 0; i < children.items.length; i += 1) {
+                childName = core.getAttribute(path2MetaNode[children.items[i]], 'name');
+                result.push({
+                    '@xsi:type':'ecore:EReference',
+                    '@name': '__child__$' + childName,
+                    '@eType': REF_PREFIX + childName,
+                    '@lowerBound': children.minItems[i] === -1 ? 0 : children.minItems[i],
+                    '@upperBound': children.maxItems[i],
+                    '@containment': 'true',
+                });
+            }
+
+            return result;
+        }
+
+        function getPointersAndSetsData(refs) {
+            var result = [],
+                refNames = Object.keys(refs),
+                i,
+                j,
+                ref,
+                targetName;
+
+            for (i = 0; i < refNames.length; i += 1) {
+                ref = refs[refNames[i]];
+                for (j = 0; j < ref.items.length; j += 1) {
+                    targetName = core.getAttribute(path2MetaNode[ref.items[j]], 'name');
+                    result.push({
+                        '@xsi:type': 'ecore:EReference',
+                        '@name': refNames[i] + '$' + targetName,
+                        '@eType': REF_PREFIX + targetName,
+                        '@lowerBound': ref.minItems[j] === -1 ? 0 : ref.minItems[j],
+                        '@upperBound': ref.maxItems[j],
+                    });
+                }
+            }
+
+            return result;
+        }
+
+        function getMetaNodeData(name, node) {
+            var metaData = {
+                '@xsi:type':'ecore:EClass',
+                '@name':name,
+                'eStructuralFeatures': []
+            },
+                baseNode = core.getBase(node),
+                metaJson;
+
+            metaJson = core.getOwnJsonMeta(node);
+
+            if (baseNode) {
+                // TODO: check if base is meta-node
+                // TODO: For libraries can we use another identifier?
+                metaData['@eSuperTypes'] = REF_PREFIX + core.getAttribute(baseNode, 'name');
+            } else {
+                // This is the FCO -> define base pointer
+                metaJson.pointers = metaJson.pointers || {};
+                metaJson.pointers.base = {
+                    items: [core.getPath(node)],
+                    minItems: [-1],
+                    maxItems: [1]
+                };
+            }
+
+            if (core.isAbstract(node)) {
+                metaData['@abstract'] = 'true';
+            }
+
+            if (metaJson.attributes) {
+                metaData.eStructuralFeatures.push(getAttributesData(metaJson.attributes));
+            }
+
+            if (metaJson.children) {
+                metaData.eStructuralFeatures.push(getChildrenData(metaJson.children));
+            }
+
+            if (metaJson.pointers) {
+                metaData.eStructuralFeatures.push(getPointersAndSetsData(metaJson.pointers));
+            }
+
+            return metaData;
+        }
+
+        for (i = 0; i < metaNames.length; i += 1) {
+            data.eClassifiers.push(getMetaNodeData(metaNames[i], name2MetaNode[metaNames[i]]));
+        }
 
         return data;
     }

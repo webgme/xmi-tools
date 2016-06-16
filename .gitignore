@@ -1,4 +1,6 @@
 .idea
+blob-local-storage
+
 # Logs
 logs
 *.log
