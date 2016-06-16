@@ -1,4 +1,13 @@
 {
-  "components": {},
-  "dependencies": {}
+  "components": {
+    "plugins": {
+      "XMIExporter": {
+        "src": "src/plugins/XMIExporter",
+        "test": "test/plugins/XMIExporter"
+      }
+    }
+  },
+  "dependencies": {
+    "plugins": {}
+  }
 }
