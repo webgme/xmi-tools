@@ -21,6 +21,9 @@ define([
     'use strict';
 
     var REF_PREFIX = '#//',
+        REF_DIV = '-',
+        ROOT_NAME = 'ROOT',
+        CONTAINMENT_REL = 'child',
         DATA_TYPE_MAP = {
             string: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString',
             float: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EFloat',
@@ -97,7 +100,7 @@ define([
                     self.result.addArtifact(metaModelHash);
                 });
         }
-    }
+    };
 
     XMIExporter.prototype.getEcoreData = function (core, rootNode, name2MetaNode) {
         var languageName = core.getAttribute(rootNode, 'name'),
@@ -114,6 +117,19 @@ define([
                 eClassifiers: []
             },
             i;
+
+        data.eClassifiers.push({
+            '@xsi:type':'ecore:EClass',
+            '@name': 'ROOT',
+            eStructuralFeatures: [{
+                '@xsi:type':'ecore:EReference',
+                '@name': CONTAINMENT_REL + REF_DIV + core.getAttribute(core.getFCO(rootNode), 'name'),
+                '@eType': REF_PREFIX + core.getAttribute(core.getFCO(rootNode), 'name'),
+                '@lowerBound': 0,
+                '@upperBound': -1,
+                '@containment': 'true',
+            }]
+        });
 
         function getAttributesData(attrs) {
             var i,
@@ -141,7 +157,7 @@ define([
                 childName = core.getAttribute(path2MetaNode[children.items[i]], 'name');
                 result.push({
                     '@xsi:type':'ecore:EReference',
-                    '@name': '__child__$' + childName,
+                    '@name': CONTAINMENT_REL + REF_DIV + childName,
                     '@eType': REF_PREFIX + childName,
                     '@lowerBound': children.minItems[i] === -1 ? 0 : children.minItems[i],
                     '@upperBound': children.maxItems[i],
@@ -166,7 +182,7 @@ define([
                     targetName = core.getAttribute(path2MetaNode[ref.items[j]], 'name');
                     result.push({
                         '@xsi:type': 'ecore:EReference',
-                        '@name': refNames[i] + '$' + targetName,
+                        '@name': refNames[i] + REF_DIV + targetName,
                         '@eType': REF_PREFIX + targetName,
                         '@lowerBound': ref.minItems[j] === -1 ? 0 : ref.minItems[j],
                         '@upperBound': ref.maxItems[j],
@@ -181,7 +197,7 @@ define([
             var metaData = {
                 '@xsi:type':'ecore:EClass',
                 '@name':name,
-                'eStructuralFeatures': []
+                eStructuralFeatures: []
             },
                 baseNode = core.getBase(node),
                 metaJson;
@@ -226,6 +242,10 @@ define([
         }
 
         return data;
+    };
+
+    XMIExporter.prototype.getXMIData = function (core, rootNode, name2MetaNode) {
+        var path2MetaNode = core.getAllMetaNodes(rootNode);
     }
 
     return XMIExporter;
