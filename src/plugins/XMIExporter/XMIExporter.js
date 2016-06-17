@@ -23,7 +23,8 @@ define([
     var REF_PREFIX = '#//',
         REF_DIV = '-',
         ROOT_NAME = 'ROOT',
-        CONTAINMENT_REL = 'child',
+        CONTAINMENT_REF = 'child',
+        NS_URI = 'www.webgme.org', // FIXME: This is just a dummy..
         DATA_TYPE_MAP = {
             string: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString',
             float: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EFloat',
@@ -71,13 +72,23 @@ define([
         // Use self to access core, project, result, logger etc from PluginBase.
         // These are all instantiated at this point.
         var self = this,
-            jsonToXml = new converters.JsonToXml(),
-            ecoreData = this.getEcoreData(this.core, this.rootNode, this.META),
-            ecoreXml = jsonToXml.convertToString({
-                'ecore:EPackage': ecoreData
-            });
+            jsonToXml = new converters.JsonToXml();
 
-        self.saveFile('meta-model.ecore', ecoreXml)
+        self.getXMIData(self.core, self.rootNode, self.META)
+            .then(function (xmiData) {
+                var languageName = self.core.getAttribute(self.rootNode, 'name'),
+                    ecoreData = self.getEcoreData(self.core, self.rootNode, self.META),
+                    eData = {},
+                    xData = {};
+
+                eData['ecore:EPackage'] = ecoreData;
+                xData[languageName + ':' + ROOT_NAME] = xmiData;
+
+                return Q.all([
+                    self.saveFile(languageName + '.ecore', jsonToXml.convertToString(eData)),
+                    self.saveFile('model.' + languageName, jsonToXml.convertToString(xData))
+                ]);
+            })
             .then(function () {
                 self.result.setSuccess(true);
                 callback(null, self.result);
@@ -87,7 +98,7 @@ define([
             });
     };
 
-    XMIExporter.prototype.saveFile = function(fName, content) {
+    XMIExporter.prototype.saveFile = function (fName, content) {
         var self = this,
             fs;
 
@@ -107,23 +118,23 @@ define([
             metaNames = Object.keys(name2MetaNode),
             path2MetaNode = core.getAllMetaNodes(rootNode),
             data = {
-                '@xmi:version': '2.0.0',
+                '@xmi:version': '2.0',
                 '@xmlns:xmi': 'http://www.omg.org/XMI',
                 '@xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
                 '@xmlns:ecore': 'http://www.eclipse.org/emf/2002/Ecore',
                 '@name': languageName,
                 '@nsPrefix': languageName,
-                '@nsURI': 'http://TODO..',
+                '@nsURI': NS_URI,
                 eClassifiers: []
             },
             i;
 
         data.eClassifiers.push({
-            '@xsi:type':'ecore:EClass',
+            '@xsi:type': 'ecore:EClass',
             '@name': 'ROOT',
             eStructuralFeatures: [{
-                '@xsi:type':'ecore:EReference',
-                '@name': CONTAINMENT_REL + REF_DIV + core.getAttribute(core.getFCO(rootNode), 'name'),
+                '@xsi:type': 'ecore:EReference',
+                '@name': CONTAINMENT_REF + REF_DIV + core.getAttribute(core.getFCO(rootNode), 'name'),
                 '@eType': REF_PREFIX + core.getAttribute(core.getFCO(rootNode), 'name'),
                 '@lowerBound': 0,
                 '@upperBound': -1,
@@ -138,7 +149,7 @@ define([
 
             for (i = 0; i < attrNames.length; i += 1) {
                 result.push({
-                    '@xsi:type':'ecore:EAttribute',
+                    '@xsi:type': 'ecore:EAttribute',
                     '@name': attrNames[i],
                     '@eType': DATA_TYPE_MAP[attrs[attrNames[i]].type]
                     //TODO: Deal with enums, ranges, regexps.
@@ -156,8 +167,8 @@ define([
             for (i = 0; i < children.items.length; i += 1) {
                 childName = core.getAttribute(path2MetaNode[children.items[i]], 'name');
                 result.push({
-                    '@xsi:type':'ecore:EReference',
-                    '@name': CONTAINMENT_REL + REF_DIV + childName,
+                    '@xsi:type': 'ecore:EReference',
+                    '@name': CONTAINMENT_REF + REF_DIV + childName,
                     '@eType': REF_PREFIX + childName,
                     '@lowerBound': children.minItems[i] === -1 ? 0 : children.minItems[i],
                     '@upperBound': children.maxItems[i],
@@ -195,10 +206,10 @@ define([
 
         function getMetaNodeData(name, node) {
             var metaData = {
-                '@xsi:type':'ecore:EClass',
-                '@name':name,
-                eStructuralFeatures: []
-            },
+                    '@xsi:type': 'ecore:EClass',
+                    '@name': name,
+                    eStructuralFeatures: []
+                },
                 baseNode = core.getBase(node),
                 metaJson;
 
@@ -244,9 +255,68 @@ define([
         return data;
     };
 
-    XMIExporter.prototype.getXMIData = function (core, rootNode, name2MetaNode) {
-        var path2MetaNode = core.getAllMetaNodes(rootNode);
-    }
+    XMIExporter.prototype.getXMIData = function (core, rootNode, name2MetaNode, callback) {
+        var languageName = core.getAttribute(rootNode, 'name'),
+            data = {
+                '@xmi:version': '2.0',
+                '@xmlns:xmi': 'http://www.omg.org/XMI',
+                '@xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance'
+            },
+            path2Data = {};
+
+        data['@xmlns:' + languageName] = NS_URI;
+        path2Data[''] = data;
+
+        function atNode(node, next) {
+            var deferred = Q.defer(),
+                parent = core.getParent(node),
+                parentData = path2Data[core.getPath(parent)],
+                metaNode = core.getBaseType(node),
+                baseNode = core.getBase(node),
+            //FIXME: Either change ecore to flatten out containment rules or match this.
+                containmentRel = CONTAINMENT_REF + REF_DIV + core.getAttribute(metaNode, 'name'),
+                nodeData = {
+                    '@xsi:type': languageName + ':' + core.getAttribute(metaNode, 'name')
+                };
+
+            console.log('at node',core.getAttribute(node, 'name'));
+
+            parentData[containmentRel] = parentData[containmentRel] || [];
+
+            core.getAttributeNames(node).forEach(function (attrName) {
+                nodeData['@' + attrName] = core.getAttribute(node, attrName);
+            });
+
+            if (metaNode !== node) {
+                //FIXME: This id is not the correct one.
+                //FIXME: Either add ids to the nodes or order the nodes and generated ids based on that.
+                nodeData['@base'] = core.getPath(baseNode);
+            }
+
+            core.getPointerNames(node).forEach(function (ptrName) {
+                //FIXME: This ptrName is not correct - it needs the meta type suffix.
+                //FIXME: The ids are not correct
+                nodeData['@' + ptrName] = core.getPointerPath(node, ptrName);
+            });
+
+            core.getSetNames(node).forEach(function (setName) {
+                //FIXME: This setName is not correct - it needs the meta type suffix.
+                //FIXME: The ids are not correct
+                nodeData['@' + setName] = core.getMemberPaths(node, setName).join(' ');
+            });
+
+            parentData[containmentRel].push(nodeData);
+            path2Data[core.getPath(node)] = nodeData;
+
+            deferred.resolve();
+            return deferred.promise.nodeify(next);
+        }
+
+        return core.traverse(rootNode, {excludeRoot: true, stopOnError: true}, atNode)
+            .then(function () {
+                return data;
+            });
+    };
 
     return XMIExporter;
 });
