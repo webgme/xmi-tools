@@ -220,7 +220,14 @@ define([
                 // TODO: For libraries can we use another identifier?
                 metaData['@eSuperTypes'] = REF_PREFIX + core.getAttribute(baseNode, 'name');
             } else {
-                // This is the FCO -> define base pointer
+                // This is the FCO -> define _id attr and base pointer
+                metaData.eStructuralFeatures.push({
+                    '@xsi:type': 'ecore:EAttribute',
+                    '@name': '_id',
+                    '@eType': DATA_TYPE_MAP['string'],
+                    '@iD': 'true'
+                });
+
                 metaJson.pointers = metaJson.pointers || {};
                 metaJson.pointers.base = {
                     items: [core.getPath(node)],
@@ -279,34 +286,28 @@ define([
                     '@xsi:type': languageName + ':' + core.getAttribute(metaNode, 'name')
                 };
 
-            console.log('at node',core.getAttribute(node, 'name'));
+            path2Data[core.getPath(node)] = nodeData;
 
             parentData[containmentRel] = parentData[containmentRel] || [];
+            parentData[containmentRel].push(nodeData);
 
             core.getAttributeNames(node).forEach(function (attrName) {
                 nodeData['@' + attrName] = core.getAttribute(node, attrName);
             });
 
             if (metaNode !== node) {
-                //FIXME: This id is not the correct one.
-                //FIXME: Either add ids to the nodes or order the nodes and generated ids based on that.
                 nodeData['@base'] = core.getPath(baseNode);
             }
 
             core.getPointerNames(node).forEach(function (ptrName) {
                 //FIXME: This ptrName is not correct - it needs the meta type suffix.
-                //FIXME: The ids are not correct
                 nodeData['@' + ptrName] = core.getPointerPath(node, ptrName);
             });
 
             core.getSetNames(node).forEach(function (setName) {
                 //FIXME: This setName is not correct - it needs the meta type suffix.
-                //FIXME: The ids are not correct
                 nodeData['@' + setName] = core.getMemberPaths(node, setName).join(' ');
             });
-
-            parentData[containmentRel].push(nodeData);
-            path2Data[core.getPath(node)] = nodeData;
 
             deferred.resolve();
             return deferred.promise.nodeify(next);
