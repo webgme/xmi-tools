@@ -21,9 +21,9 @@ define([
     'use strict';
 
     var REF_PREFIX = '#//',
-        REF_DIV = '-',
+        POINTER_SET_DIV = '-',
+        CONTAINMENT_PREFIX = '',
         ROOT_NAME = 'ROOT',
-        CONTAINMENT_REF = 'child',
         NS_URI = 'www.webgme.org', // FIXME: This is just a dummy..
         DATA_TYPE_MAP = {
             string: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString',
@@ -118,6 +118,8 @@ define([
         var languageName = core.getAttribute(rootNode, 'name'),
             metaNames = Object.keys(name2MetaNode),
             path2MetaNode = core.getAllMetaNodes(rootNode),
+            metaPaths = Object.keys(path2MetaNode),
+            metaPathToDerivedMetaPaths = {},
             data = {
                 '@xmi:version': '2.0',
                 '@xmlns:xmi': 'http://www.omg.org/XMI',
@@ -128,14 +130,15 @@ define([
                 '@nsURI': NS_URI,
                 eClassifiers: []
             },
-            i;
+            m,
+            mm;
 
         data.eClassifiers.push({
             '@xsi:type': 'ecore:EClass',
             '@name': 'ROOT',
             eStructuralFeatures: [{
                 '@xsi:type': 'ecore:EReference',
-                '@name': CONTAINMENT_REF + REF_DIV + core.getAttribute(core.getFCO(rootNode), 'name'),
+                '@name': CONTAINMENT_PREFIX + core.getAttribute(core.getFCO(rootNode), 'name'),
                 '@eType': REF_PREFIX + core.getAttribute(core.getFCO(rootNode), 'name'),
                 '@lowerBound': 0,
                 '@upperBound': -1,
@@ -160,22 +163,24 @@ define([
             return result;
         }
 
-        function getChildrenData(children, flatChildrenNodes) {
+        function getChildrenData(children) {
             var result = [],
-                ownChildrenPaths = {},
+                addedChildren = {},
+                ownChildrenPaths = [],
+                derived,
                 i,
+                j,
                 childName;
 
-            children = children || {};
             children.items = children.items || [];
 
             // Add the directly defined containment rules.
             for (i = 0; i < children.items.length; i += 1) {
                 childName = core.getAttribute(path2MetaNode[children.items[i]], 'name');
-                ownChildrenPaths[children.items[i]] = true;
+                addedChildren[children.items[i]] = true;
                 result.push({
                     '@xsi:type': 'ecore:EReference',
-                    '@name': CONTAINMENT_REF + REF_DIV + childName,
+                    '@name': CONTAINMENT_PREFIX + childName,
                     '@eType': REF_PREFIX + childName,
                     '@lowerBound': children.minItems[i] === -1 ? 0 : children.minItems[i],
                     '@upperBound': children.maxItems[i],
@@ -183,20 +188,25 @@ define([
                 });
             }
 
-            // Add containment rules inherited from base or mixin nodes.
-            for (i = 0; i < flatChildrenNodes.length; i += 1) {
-                if (ownChildrenPaths[core.getPath(flatChildrenNodes[i])] === true) {
-                    // Already accounted for, so skip it.
-                    continue;
-                }
+            ownChildrenPaths = Object.keys(addedChildren);
 
-                childName = core.getAttribute(flatChildrenNodes[i], 'name');
-                result.push({
-                    '@xsi:type': 'ecore:EReference',
-                    '@name': CONTAINMENT_REF + REF_DIV + childName,
-                    '@eType': REF_PREFIX + childName,
-                    '@containment': 'true',
-                });
+            for (i = 0; i < ownChildrenPaths.length; i += 1) {
+                derived = metaPathToDerivedMetaPaths[ownChildrenPaths[i]];
+                for (j = 0; j < derived.length; j += 1) {
+                    if (addedChildren[derived[j]] === true) {
+                        continue;
+                    }
+
+
+                    childName = core.getAttribute(path2MetaNode[derived[j]], 'name');
+                    addedChildren[derived[j]] = true;
+                    result.push({
+                        '@xsi:type': 'ecore:EReference',
+                        '@name': CONTAINMENT_PREFIX + childName,
+                        '@eType': REF_PREFIX + childName,
+                        '@containment': 'true',
+                    });
+                }
             }
 
             return result;
@@ -205,6 +215,9 @@ define([
         function getPointersAndSetsData(refs) {
             var result = [],
                 refNames = Object.keys(refs),
+                addedRefs = {},
+                ownRefs = [],
+                derived,
                 i,
                 j,
                 ref,
@@ -216,7 +229,7 @@ define([
                     targetName = core.getAttribute(path2MetaNode[ref.items[j]], 'name');
                     result.push({
                         '@xsi:type': 'ecore:EReference',
-                        '@name': refNames[i] + REF_DIV + targetName,
+                        '@name': refNames[i] + POINTER_SET_DIV + targetName,
                         '@eType': REF_PREFIX + targetName,
                         '@lowerBound': ref.minItems[j] === -1 ? 0 : ref.minItems[j],
                         '@upperBound': ref.maxItems[j],
@@ -234,9 +247,9 @@ define([
                     eStructuralFeatures: []
                 },
                 baseNode = core.getBase(node),
-                metaJson;
+                ownMetaJson;
 
-            metaJson = core.getOwnJsonMeta(node);
+            ownMetaJson = core.getOwnJsonMeta(node);
 
             if (baseNode) {
                 // TODO: check if base is meta-node
@@ -251,8 +264,8 @@ define([
                     '@iD': 'true'
                 });
 
-                metaJson.pointers = metaJson.pointers || {};
-                metaJson.pointers.base = {
+                ownMetaJson.pointers = ownMetaJson.pointers || {};
+                ownMetaJson.pointers.base = {
                     items: [core.getPath(node)],
                     minItems: [-1],
                     maxItems: [1]
@@ -263,23 +276,36 @@ define([
                 metaData['@abstract'] = 'true';
             }
 
-            if (metaJson.attributes) {
-                metaData.eStructuralFeatures.push(getAttributesData(metaJson.attributes));
+            if (ownMetaJson.attributes) {
+                metaData.eStructuralFeatures.push(getAttributesData(ownMetaJson.attributes));
             }
 
             metaData.eStructuralFeatures.push(
-                getChildrenData(metaJson.children, core.getValidChildrenMetaNodes({node: node})));
+                getChildrenData(ownMetaJson.children || {})
+            );
 
-
-            if (metaJson.pointers) {
-                metaData.eStructuralFeatures.push(getPointersAndSetsData(metaJson.pointers));
-            }
+            metaData.eStructuralFeatures.push(
+                getPointersAndSetsData(ownMetaJson.pointers || {})
+            );
 
             return metaData;
         }
 
-        for (i = 0; i < metaNames.length; i += 1) {
-            data.eClassifiers.push(getMetaNodeData(metaNames[i], name2MetaNode[metaNames[i]]));
+        // Build up mapping from meta-node path to all derived meta-nodes' paths.
+        for (m = 0; m < metaPaths.length; m += 1) {
+            metaPathToDerivedMetaPaths[metaPaths[m]] = [];
+            for (mm = 0; mm < metaPaths.length; mm += 1) {
+                if (core.isTypeOf(path2MetaNode[metaPaths[mm]], path2MetaNode[metaPaths[m]]) === true &&
+                    metaPaths[mm] !== metaPaths[m]) {
+                    metaPathToDerivedMetaPaths[metaPaths[m]].push(metaPaths[mm]);
+                }
+            }
+        }
+
+        console.log(JSON.stringify(metaPathToDerivedMetaPaths, null, 2));
+
+        for (m = 0; m < metaNames.length; m += 1) {
+            data.eClassifiers.push(getMetaNodeData(metaNames[m], name2MetaNode[metaNames[m]]));
         }
 
         return data;
@@ -303,8 +329,7 @@ define([
                 parentData = path2Data[core.getPath(parent)],
                 metaNode = core.getBaseType(node),
                 baseNode = core.getBase(node),
-            //FIXME: Either change ecore to flatten out containment rules or match this.
-                containmentRel = CONTAINMENT_REF + REF_DIV + core.getAttribute(metaNode, 'name'),
+                containmentRel = CONTAINMENT_PREFIX + core.getAttribute(metaNode, 'name'),
                 nodeData = {
                     '@xsi:type': languageName + ':' + core.getAttribute(metaNode, 'name')
                 };
