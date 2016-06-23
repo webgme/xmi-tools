@@ -94,6 +94,7 @@ define([
                 callback(null, self.result);
             })
             .catch(function (err) {
+                self.logger.error(err.stack);
                 callback(err, self.result);
             });
     };
@@ -159,19 +160,41 @@ define([
             return result;
         }
 
-        function getChildrenData(children) {
+        function getChildrenData(children, flatChildrenNodes) {
             var result = [],
+                ownChildrenPaths = {},
                 i,
                 childName;
 
+            children = children || {};
+            children.items = children.items || [];
+
+            // Add the directly defined containment rules.
             for (i = 0; i < children.items.length; i += 1) {
                 childName = core.getAttribute(path2MetaNode[children.items[i]], 'name');
+                ownChildrenPaths[children.items[i]] = true;
                 result.push({
                     '@xsi:type': 'ecore:EReference',
                     '@name': CONTAINMENT_REF + REF_DIV + childName,
                     '@eType': REF_PREFIX + childName,
                     '@lowerBound': children.minItems[i] === -1 ? 0 : children.minItems[i],
                     '@upperBound': children.maxItems[i],
+                    '@containment': 'true',
+                });
+            }
+
+            // Add containment rules inherited from base or mixin nodes.
+            for (i = 0; i < flatChildrenNodes.length; i += 1) {
+                if (ownChildrenPaths[core.getPath(flatChildrenNodes[i])] === true) {
+                    // Already accounted for, so skip it.
+                    continue;
+                }
+
+                childName = core.getAttribute(flatChildrenNodes[i], 'name');
+                result.push({
+                    '@xsi:type': 'ecore:EReference',
+                    '@name': CONTAINMENT_REF + REF_DIV + childName,
+                    '@eType': REF_PREFIX + childName,
                     '@containment': 'true',
                 });
             }
@@ -244,9 +267,9 @@ define([
                 metaData.eStructuralFeatures.push(getAttributesData(metaJson.attributes));
             }
 
-            if (metaJson.children) {
-                metaData.eStructuralFeatures.push(getChildrenData(metaJson.children));
-            }
+            metaData.eStructuralFeatures.push(
+                getChildrenData(metaJson.children, core.getValidChildrenMetaNodes({node: node})));
+
 
             if (metaJson.pointers) {
                 metaData.eStructuralFeatures.push(getPointersAndSetsData(metaJson.pointers));
