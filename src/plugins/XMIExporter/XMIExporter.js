@@ -30,7 +30,7 @@ define([
             float: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EFloat',
             integer: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt',
             boolean: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EBoolean',
-            asset: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EBoolean',
+            asset: 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString',
         };
 
     pluginMetadata = JSON.parse(pluginMetadata);
@@ -86,7 +86,7 @@ define([
 
                 return Q.all([
                     self.saveFile(languageName + '.ecore', jsonToXml.convertToString(eData)),
-                    self.saveFile('model.' + languageName, jsonToXml.convertToString(xData))
+                    self.saveFile(languageName + '.xmi', jsonToXml.convertToString(xData))
                 ]);
             })
             .then(function () {
@@ -197,8 +197,7 @@ define([
                         '@xsi:type': 'ecore:EReference',
                         '@name': CONTAINMENT_PREFIX + childName,
                         '@eType': REF_PREFIX + childName,
-                        '@containment': 'true',
-                        '@Derived': 'true' // FIXME: This is probably not correct..
+                        '@containment': 'true'
                     });
                 }
             }
@@ -234,6 +233,11 @@ define([
                         '@lowerBound': ref.minItems[j] === -1 ? 0 : ref.minItems[j],
                         '@upperBound': ref.maxItems[j],
                     });
+                }
+
+                if (refNames[i] === 'base') {
+                    // Do not flatten out the base pointer.
+                    continue;
                 }
 
                 ownRefs = Object.keys(addedRefs);
@@ -293,7 +297,8 @@ define([
             }
 
             if (core.isAbstract(node)) {
-                metaData['@abstract'] = 'true';
+                // This is a visual feature really.
+                //metaData['@abstract'] = 'true';
             }
 
             if (ownMetaJson.attributes) {
@@ -346,9 +351,11 @@ define([
                 '@xmlns:xmi': 'http://www.omg.org/XMI',
                 '@xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance'
             },
+            fcoName = core.getAttribute(core.getFCO(rootNode), 'name'),
             path2Data = {};
 
         data['@xmlns:' + languageName] = NS_URI;
+        data['@xsi:schemaLocation'] = NS_URI + ' ' + languageName + '.ecore';
         path2Data[''] = data;
 
         function atNode(node, next) {
@@ -361,30 +368,62 @@ define([
                 containmentRel = CONTAINMENT_PREFIX + core.getAttribute(metaNode, 'name'),
                 nodeData = {
                     '@xsi:type': languageName + ':' + core.getAttribute(metaNode, 'name')
-                };
+                },
+                promises = [];
 
             path2Data[core.getPath(node)] = nodeData;
 
             parentData[containmentRel] = parentData[containmentRel] || [];
             parentData[containmentRel].push(nodeData);
 
+            nodeData['@_id'] = core.getGuid(node);
             core.getAttributeNames(node).forEach(function (attrName) {
                 nodeData['@' + attrName] = core.getAttribute(node, attrName);
             });
 
-            if (metaNode !== node) {
-                nodeData['@base'] = core.getPath(baseNode);
-            }
-
             core.getPointerNames(node).forEach(function (ptrName) {
-                nodeData['@' + metaName + POINTER_SET_DIV + ptrName] = core.getPointerPath(node, ptrName);
+                var targetPath = core.getPointerPath(node, ptrName);
+
+                if (targetPath) {
+                    promises.push(
+                        core.loadByPath(rootNode, targetPath)
+                            .then(function (targetNode) {
+                                if (ptrName === 'base') {
+                                    nodeData['@' + ptrName + POINTER_SET_DIV + fcoName] = core.getGuid(targetNode);
+                                } else {
+                                    var targetMetaNode = core.getBaseType(targetNode),
+                                        targetMetaName = core.getAttribute(targetMetaNode, 'name');
+
+                                    nodeData['@' + ptrName + POINTER_SET_DIV + targetMetaName] =
+                                        core.getGuid(targetNode);
+                                }
+                            })
+                    );
+                }
             });
 
             core.getSetNames(node).forEach(function (setName) {
-                nodeData['@' + metaName + POINTER_SET_DIV + setName] = core.getMemberPaths(node, setName).join(' ');
+                var memberPaths = core.getMemberPaths(node, setName);
+                memberPaths.forEach(function (memberPath) {
+                    promises.push(
+                        core.loadByPath(rootNode, memberPath)
+                            .then(function (memberNode) {
+                                var memberMetaNode = core.getBaseType(memberNode),
+                                    memberMetaName = core.getAttribute(memberMetaNode, 'name'),
+                                    setAttr = '@' + setName + POINTER_SET_DIV + memberMetaName;
+
+                                nodeData[setAttr] = typeof nodeData[setAttr] === 'string' ?
+                                    nodeData[setAttr] + ' ' + core.getGuid(memberNode) : core.getGuid(memberNode);
+                            })
+                    );
+                })
+
             });
 
-            deferred.resolve();
+            Q.all(promises)
+                .then(deferred.resolve)
+                .catch(deferred.reject);
+
             return deferred.promise.nodeify(next);
         }
 
