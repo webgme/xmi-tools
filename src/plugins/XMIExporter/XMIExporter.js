@@ -130,21 +130,15 @@ define([
                 '@nsURI': NS_URI,
                 eClassifiers: []
             },
+            rootNodeData = {
+                '@xsi:type': 'ecore:EClass',
+                '@name': 'ROOT',
+                eStructuralFeatures: []
+            },
             m,
             mm;
 
-        data.eClassifiers.push({
-            '@xsi:type': 'ecore:EClass',
-            '@name': 'ROOT',
-            eStructuralFeatures: [{
-                '@xsi:type': 'ecore:EReference',
-                '@name': CONTAINMENT_PREFIX + core.getAttribute(core.getFCO(rootNode), 'name'),
-                '@eType': REF_PREFIX + core.getAttribute(core.getFCO(rootNode), 'name'),
-                '@lowerBound': 0,
-                '@upperBound': -1,
-                '@containment': 'true',
-            }]
-        });
+        data.eClassifiers.push(rootNodeData);
 
         function getAttributesData(attrs) {
             var i,
@@ -197,7 +191,6 @@ define([
                         continue;
                     }
 
-
                     childName = core.getAttribute(path2MetaNode[derived[j]], 'name');
                     addedChildren[derived[j]] = true;
                     result.push({
@@ -205,6 +198,7 @@ define([
                         '@name': CONTAINMENT_PREFIX + childName,
                         '@eType': REF_PREFIX + childName,
                         '@containment': 'true',
+                        '@Derived': 'true' // FIXME: This is probably not correct..
                     });
                 }
             }
@@ -215,18 +209,24 @@ define([
         function getPointersAndSetsData(refs) {
             var result = [],
                 refNames = Object.keys(refs),
-                addedRefs = {},
-                ownRefs = [],
+                addedRefs,
+                ownRefs,
                 derived,
                 i,
                 j,
+                k,
                 ref,
                 targetName;
 
             for (i = 0; i < refNames.length; i += 1) {
                 ref = refs[refNames[i]];
+                addedRefs = {};
                 for (j = 0; j < ref.items.length; j += 1) {
                     targetName = core.getAttribute(path2MetaNode[ref.items[j]], 'name');
+                    addedRefs[ref.items[j]] = {
+                        minItems: ref.minItems[j],
+                        maxItems: ref.maxItems[j]
+                    };
                     result.push({
                         '@xsi:type': 'ecore:EReference',
                         '@name': refNames[i] + POINTER_SET_DIV + targetName,
@@ -234,6 +234,26 @@ define([
                         '@lowerBound': ref.minItems[j] === -1 ? 0 : ref.minItems[j],
                         '@upperBound': ref.maxItems[j],
                     });
+                }
+
+                ownRefs = Object.keys(addedRefs);
+                for (j = 0; j < ownRefs.length; j += 1) {
+                    derived = metaPathToDerivedMetaPaths[ownRefs[j]];
+                    for (k = 0; k < derived.length; k += 1) {
+                        if (addedRefs.hasOwnProperty(derived[k]) === true) {
+                            continue;
+                        }
+
+                        targetName = core.getAttribute(path2MetaNode[derived[k]], 'name');
+                        addedRefs[derived[k]] = true;
+                        result.push({
+                            '@xsi:type': 'ecore:EReference',
+                            '@name': refNames[i] + POINTER_SET_DIV + targetName,
+                            '@eType': REF_PREFIX + targetName,
+                            '@lowerBound': addedRefs[ownRefs[j]].minItems === -1 ? 0 : addedRefs[ownRefs[j]].minItems,
+                            '@upperBound': addedRefs[ownRefs[j]].maxItems,
+                        });
+                    }
                 }
             }
 
@@ -302,10 +322,18 @@ define([
             }
         }
 
-        console.log(JSON.stringify(metaPathToDerivedMetaPaths, null, 2));
-
         for (m = 0; m < metaNames.length; m += 1) {
+            // Gather the meta-data for each node.
             data.eClassifiers.push(getMetaNodeData(metaNames[m], name2MetaNode[metaNames[m]]));
+            // Add meta-node to root-node children.
+            rootNodeData.eStructuralFeatures.push({
+                '@xsi:type': 'ecore:EReference',
+                '@name': CONTAINMENT_PREFIX + metaNames[m],
+                '@eType': REF_PREFIX + metaNames[m],
+                '@lowerBound': 0,
+                '@upperBound': -1,
+                '@containment': 'true',
+            });
         }
 
         return data;
@@ -329,6 +357,7 @@ define([
                 parentData = path2Data[core.getPath(parent)],
                 metaNode = core.getBaseType(node),
                 baseNode = core.getBase(node),
+                metaName = core.getAttribute(metaNode, 'name'),
                 containmentRel = CONTAINMENT_PREFIX + core.getAttribute(metaNode, 'name'),
                 nodeData = {
                     '@xsi:type': languageName + ':' + core.getAttribute(metaNode, 'name')
@@ -348,13 +377,11 @@ define([
             }
 
             core.getPointerNames(node).forEach(function (ptrName) {
-                //FIXME: This ptrName is not correct - it needs the meta type suffix.
-                nodeData['@' + ptrName] = core.getPointerPath(node, ptrName);
+                nodeData['@' + metaName + POINTER_SET_DIV + ptrName] = core.getPointerPath(node, ptrName);
             });
 
             core.getSetNames(node).forEach(function (setName) {
-                //FIXME: This setName is not correct - it needs the meta type suffix.
-                nodeData['@' + setName] = core.getMemberPaths(node, setName).join(' ');
+                nodeData['@' + metaName + POINTER_SET_DIV + setName] = core.getMemberPaths(node, setName).join(' ');
             });
 
             deferred.resolve();
