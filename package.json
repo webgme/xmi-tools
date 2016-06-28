@@ -1,5 +1,6 @@
 {
   "name": "xmi-tools",
+  "bin": "./webhook/webhookhandler.js",
   "scripts": {
     "start": "node app.js",
     "test": "node ./node_modules/mocha/bin/mocha --recursive test",
@@ -21,5 +22,10 @@
     "rimraf": "^2.4.0",
     "chai": "^3.0.0"
   },
-  "dependencies": {}
+  "dependencies": {
+    "body-parser": "^1.15.2",
+    "express": "4.14.0",
+    "mongodb": "^2.1.18",
+    "superagent": "^2.0.0"
+  }
 }
