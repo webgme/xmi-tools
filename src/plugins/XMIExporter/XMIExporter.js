@@ -23,7 +23,15 @@ define([
 
     var REF_PREFIX = '#//',
         POINTER_SET_DIV = '-',
+        ATTR_PREFIX = 'atr-',
+        REL_PREFIX = 'rel-',
+        INV_REL_PREFIX = 'invrel-',
+        SET_REL_PREFIX = 'set-',
         CONTAINMENT_PREFIX = '',
+        BASE = 'base',
+        RELID = 'relid',
+        ID = 'id',
+        IS_META = 'isMeta',
         ROOT_NAME = 'ROOT',
         NS_URI = 'www.webgme.org', // FIXME: This is just a dummy..
         DATA_TYPE_MAP = {};
@@ -139,6 +147,8 @@ define([
                 '@name': 'ROOT',
                 eStructuralFeatures: []
             },
+            nameToInvrel = {},
+            nameToClassifier = {},
             m,
             mm;
 
@@ -152,7 +162,7 @@ define([
             for (i = 0; i < attrNames.length; i += 1) {
                 result.push({
                     '@xsi:type': 'ecore:EAttribute',
-                    '@name': attrNames[i],
+                    '@name': ATTR_PREFIX + attrNames[i],
                     '@eType': DATA_TYPE_MAP[attrs[attrNames[i]].type]
                     //TODO: Deal with enums, ranges, regexps.
                 });
@@ -209,9 +219,10 @@ define([
             return result;
         }
 
-        function getPointersAndSetsData(refs) {
+        function getPointersAndSetsData(refs, name, path) {
             var result = [],
                 refNames = Object.keys(refs),
+                isPointer,
                 addedRefs,
                 ownRefs,
                 derived,
@@ -219,11 +230,14 @@ define([
                 j,
                 k,
                 ref,
+                ownerName,
                 targetName;
 
             for (i = 0; i < refNames.length; i += 1) {
                 ref = refs[refNames[i]];
                 addedRefs = {};
+                isPointer = ref.min === 1 && ref.max === 1;
+
                 for (j = 0; j < ref.items.length; j += 1) {
                     targetName = core.getAttribute(path2MetaNode[ref.items[j]], 'name');
                     addedRefs[ref.items[j]] = {
@@ -232,16 +246,36 @@ define([
                     };
                     result.push({
                         '@xsi:type': 'ecore:EReference',
-                        '@name': refNames[i] + POINTER_SET_DIV + targetName,
+                        '@name': REL_PREFIX + refNames[i] + POINTER_SET_DIV + targetName,
                         '@eType': REF_PREFIX + targetName,
                         '@lowerBound': ref.minItems[j] === -1 ? 0 : ref.minItems[j],
                         '@upperBound': ref.maxItems[j],
                     });
-                }
 
-                if (refNames[i] === 'base') {
-                    // Do not flatten out the base pointer.
-                    continue;
+                    if (isPointer) {
+                        // Add the inverse relationships for pointers
+                        nameToInvrel[targetName] = nameToInvrel[targetName] || {};
+                        nameToInvrel[targetName][INV_REL_PREFIX + refNames[i] + POINTER_SET_DIV + name] = {
+                            '@xsi:type': 'ecore:EReference',
+                            '@name': INV_REL_PREFIX + refNames[i] + POINTER_SET_DIV + name,
+                            '@eType': REF_PREFIX + name,
+                            '@lowerBound': 0,
+                            '@upperBound': -1,
+                        };
+
+                        derived = metaPathToDerivedMetaPaths[path];
+
+                        for (k = 0; k < derived.length; k += 1) {
+                            ownerName = core.getAttribute(path2MetaNode[derived[k]], 'name');
+                            nameToInvrel[targetName][INV_REL_PREFIX + refNames[i] + POINTER_SET_DIV + ownerName] = {
+                                '@xsi:type': 'ecore:EReference',
+                                '@name': INV_REL_PREFIX + refNames[i] + POINTER_SET_DIV + ownerName,
+                                '@eType': REF_PREFIX + ownerName,
+                                '@lowerBound': 0,
+                                '@upperBound': -1,
+                            };
+                        }
+                    }
                 }
 
                 ownRefs = Object.keys(addedRefs);
@@ -256,7 +290,7 @@ define([
                         addedRefs[derived[k]] = true;
                         result.push({
                             '@xsi:type': 'ecore:EReference',
-                            '@name': refNames[i] + POINTER_SET_DIV + targetName,
+                            '@name': REL_PREFIX + refNames[i] + POINTER_SET_DIV + targetName,
                             '@eType': REF_PREFIX + targetName,
                             '@lowerBound': addedRefs[ownRefs[j]].minItems === -1 ? 0 : addedRefs[ownRefs[j]].minItems,
                             '@upperBound': addedRefs[ownRefs[j]].maxItems,
@@ -279,6 +313,8 @@ define([
 
             ownMetaJson = core.getOwnJsonMeta(node);
 
+            nameToClassifier[name] = metaData;
+
             if (baseNode) {
                 // TODO: check if base is meta-node
                 // TODO: For libraries can we use another identifier?
@@ -287,17 +323,30 @@ define([
                 // This is the FCO -> define _id attr and base pointer
                 metaData.eStructuralFeatures.push({
                     '@xsi:type': 'ecore:EAttribute',
-                    '@name': '_id',
+                    '@name': ID,
                     '@eType': DATA_TYPE_MAP[CORE_CONSTANTS.ATTRIBUTE_TYPES.STRING],
                     '@iD': 'true'
                 });
 
-                ownMetaJson.pointers = ownMetaJson.pointers || {};
-                ownMetaJson.pointers.base = {
-                    items: [core.getPath(node)],
-                    minItems: [-1],
-                    maxItems: [1]
-                };
+                metaData.eStructuralFeatures.push({
+                    '@xsi:type': 'ecore:EAttribute',
+                    '@name': RELID,
+                    '@eType': DATA_TYPE_MAP[CORE_CONSTANTS.ATTRIBUTE_TYPES.STRING]
+                });
+
+                metaData.eStructuralFeatures.push({
+                    '@xsi:type': 'ecore:EAttribute',
+                    '@name': IS_META,
+                    '@eType': DATA_TYPE_MAP[CORE_CONSTANTS.ATTRIBUTE_TYPES.BOOLEAN]
+                });
+
+                metaData.eStructuralFeatures.push({
+                    '@xsi:type': 'ecore:EReference',
+                    '@name': BASE,
+                    '@eType': REF_PREFIX + name,
+                    '@lowerBound': 0,
+                    '@upperBound': 1,
+                });
             }
 
             if (core.isAbstract(node)) {
@@ -314,7 +363,7 @@ define([
             );
 
             metaData.eStructuralFeatures.push(
-                getPointersAndSetsData(ownMetaJson.pointers || {})
+                getPointersAndSetsData(ownMetaJson.pointers || {}, name, core.getPath(node))
             );
 
             return metaData;
@@ -343,6 +392,12 @@ define([
                 '@upperBound': -1,
                 '@containment': 'true',
             });
+        }
+
+        for (m in nameToInvrel) {
+            for (mm in nameToInvrel[m]) {
+                nameToClassifier[m].eStructuralFeatures.push(nameToInvrel[m][mm]);
+            }
         }
 
         return data;
@@ -380,9 +435,12 @@ define([
             parentData[containmentRel] = parentData[containmentRel] || [];
             parentData[containmentRel].push(nodeData);
 
-            nodeData['@_id'] = core.getGuid(node);
+            nodeData['@' + ID] = core.getGuid(node);
+            nodeData['@' + RELID] = core.getRelid(node);
+            nodeData['@' + IS_META] = node === metaNode;
+
             core.getAttributeNames(node).forEach(function (attrName) {
-                nodeData['@' + attrName] = core.getAttribute(node, attrName);
+                nodeData['@' + ATTR_PREFIX + attrName] = core.getAttribute(node, attrName);
             });
 
             core.getPointerNames(node).forEach(function (ptrName) {
@@ -393,12 +451,12 @@ define([
                         core.loadByPath(rootNode, targetPath)
                             .then(function (targetNode) {
                                 if (ptrName === 'base') {
-                                    nodeData['@' + ptrName + POINTER_SET_DIV + fcoName] = core.getGuid(targetNode);
+                                    nodeData['@' + BASE] = core.getGuid(targetNode);
                                 } else {
                                     var targetMetaNode = core.getBaseType(targetNode),
                                         targetMetaName = core.getAttribute(targetMetaNode, 'name');
 
-                                    nodeData['@' + ptrName + POINTER_SET_DIV + targetMetaName] =
+                                    nodeData['@' + REL_PREFIX + ptrName + POINTER_SET_DIV + targetMetaName] =
                                         core.getGuid(targetNode);
                                 }
                             })
@@ -414,10 +472,33 @@ define([
                             .then(function (memberNode) {
                                 var memberMetaNode = core.getBaseType(memberNode),
                                     memberMetaName = core.getAttribute(memberMetaNode, 'name'),
-                                    setAttr = '@' + setName + POINTER_SET_DIV + memberMetaName;
+                                    setAttr = '@' + SET_REL_PREFIX + setName + POINTER_SET_DIV + memberMetaName;
 
                                 nodeData[setAttr] = typeof nodeData[setAttr] === 'string' ?
                                     nodeData[setAttr] + ' ' + core.getGuid(memberNode) : core.getGuid(memberNode);
+                            })
+                    );
+                });
+
+            });
+
+            core.getCollectionNames(node).forEach(function (collectionName) {
+                var collectionPaths = core.getCollectionPaths(node, collectionName);
+                if (collectionName === 'base') {
+                    return;
+                }
+                collectionPaths.forEach(function (collectionPath) {
+                    promises.push(
+                        core.loadByPath(rootNode, collectionPath)
+                            .then(function (collectionNode) {
+                                var collectionMetaNode = core.getBaseType(collectionNode),
+                                    collectionMetaName = core.getAttribute(collectionMetaNode, 'name'),
+                                    collectionAttr =
+                                        '@' + INV_REL_PREFIX + collectionName + POINTER_SET_DIV + collectionMetaName;
+
+                                nodeData[collectionAttr] = typeof nodeData[collectionAttr] === 'string' ?
+                                nodeData[collectionAttr] + ' ' + core.getGuid(collectionNode) :
+                                    core.getGuid(collectionNode);
                             })
                     );
                 });
@@ -434,7 +515,8 @@ define([
         return core.traverse(rootNode, {excludeRoot: true, stopOnError: true}, atNode)
             .then(function () {
                 return data;
-            });
+            })
+            .nodeify(callback);
     };
 
     return XMIExporter;
