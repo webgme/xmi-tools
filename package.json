@@ -1,6 +1,5 @@
 {
   "name": "xmi-tools",
-  "bin": "./webhook/webhookhandler.js",
   "scripts": {
     "start": "node app.js",
     "test": "node ./node_modules/mocha/bin/mocha --recursive test",
