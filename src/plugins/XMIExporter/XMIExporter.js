@@ -12,7 +12,7 @@ define([
     'plugin/PluginBase',
     'common/util/xmljsonconverter',
     'common/core/constants',
-    'q'
+    'q',
 ], function (PluginConfig,
              pluginMetadata,
              PluginBase,
@@ -34,7 +34,8 @@ define([
         IS_META = 'isMeta',
         ROOT_NAME = 'ROOT',
         NS_URI = 'www.webgme.org', // FIXME: This is just a dummy..
-        DATA_TYPE_MAP = {};
+        DATA_TYPE_MAP = {},
+        ILLEGAL_CHAR_REGEXP = /[^a-zA-Z0-9]/g;
 
     // jscs:disable maximumLineLength
     DATA_TYPE_MAP[CORE_CONSTANTS.ATTRIBUTE_TYPES.STRING] = 'ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString';
@@ -86,20 +87,19 @@ define([
         var self = this,
             jsonToXml = new converters.JsonToXml();
 
+        self.config = self.getCurrentConfig();
         self.getXMIData(self.core, self.rootNode, self.META)
             .then(function (xmiData) {
                 var languageName = self.core.getAttribute(self.rootNode, 'name'),
                     ecoreData = self.getEcoreData(self.core, self.rootNode, self.META),
                     eData = {},
+                    fName = self.config.fName || languageName + '.xml',
                     xData = {};
 
-                eData['ecore:EPackage'] = ecoreData;
+                //eData['ecore:EPackage'] = ecoreData;
                 xData[languageName + ':' + ROOT_NAME] = xmiData;
 
-                return Q.all([
-                    self.saveFile(languageName + '.ecore', jsonToXml.convertToString(eData)),
-                    self.saveFile(languageName + '.xmi', jsonToXml.convertToString(xData))
-                ]);
+                return self.saveFile(fName, jsonToXml.convertToString(xData));
             })
             .then(function () {
                 self.result.setSuccess(true);
@@ -404,7 +404,8 @@ define([
     };
 
     XMIExporter.prototype.getXMIData = function (core, rootNode, name2MetaNode, callback) {
-        var languageName = core.getAttribute(rootNode, 'name'),
+        var self = this,
+            languageName = core.getAttribute(rootNode, 'name'),
             data = {
                 '@xmi:version': '2.0',
                 '@xmlns:xmi': 'http://www.omg.org/XMI',
@@ -424,10 +425,13 @@ define([
                 metaNode = core.getBaseType(node),
                 baseNode = core.getBase(node),
                 metaName = core.getAttribute(metaNode, 'name'),
-                containmentRel = CONTAINMENT_PREFIX + core.getAttribute(metaNode, 'name'),
+                containmentRel = CONTAINMENT_PREFIX + metaName,
                 nodeData = {
-                    '@xsi:type': languageName + ':' + core.getAttribute(metaNode, 'name')
+                    '@xsi:type': languageName + ':' + metaName
                 },
+                validPointerNames = core.getValidPointerNames(node),
+                validAttributeNames = core.getValidAttributeNames(node),
+                validSetNames = core.getValidSetNames(node),
                 promises = [];
 
             path2Data[core.getPath(node)] = nodeData;
@@ -440,69 +444,85 @@ define([
             nodeData['@' + IS_META] = node === metaNode;
 
             core.getAttributeNames(node).forEach(function (attrName) {
-                nodeData['@' + ATTR_PREFIX + attrName] = core.getAttribute(node, attrName);
+                if (validAttributeNames.indexOf(attrName) === -1) {
+                    self.logger.warn('Skipping attribute with no meta-definition', attrName);
+                } else {
+                    nodeData['@' + ATTR_PREFIX + self.sanitizeName(attrName)] =
+                        self.encodeAttribute(core.getAttribute(node, attrName));
+                }
             });
 
             core.getPointerNames(node).forEach(function (ptrName) {
                 var targetPath = core.getPointerPath(node, ptrName);
 
-                if (targetPath) {
-                    promises.push(
-                        core.loadByPath(rootNode, targetPath)
-                            .then(function (targetNode) {
-                                if (ptrName === 'base') {
-                                    nodeData['@' + BASE] = core.getGuid(targetNode);
-                                } else {
-                                    var targetMetaNode = core.getBaseType(targetNode),
-                                        targetMetaName = core.getAttribute(targetMetaNode, 'name');
+                if (validPointerNames.indexOf(ptrName) === -1 && ptrName !== 'base') {
+                    self.logger.warn('Skipping pointer with no meta-definition', ptrName);
+                } else {
+                    if (targetPath) {
+                        promises.push(
+                            core.loadByPath(rootNode, targetPath)
+                                .then(function (targetNode) {
+                                    if (ptrName === 'base') {
+                                        nodeData['@' + BASE] = core.getGuid(targetNode);
+                                    } else {
+                                        var targetMetaNode = core.getBaseType(targetNode),
+                                            targetMetaName = core.getAttribute(targetMetaNode, 'name');
 
-                                    nodeData['@' + REL_PREFIX + ptrName + POINTER_SET_DIV + targetMetaName] =
-                                        core.getGuid(targetNode);
-                                }
-                            })
-                    );
+                                        nodeData['@' + REL_PREFIX + self.sanitizeName(ptrName) + POINTER_SET_DIV +
+                                        self.sanitizeName(targetMetaName)] = core.getGuid(targetNode);
+                                    }
+                                })
+                        );
+                    }
                 }
             });
 
             core.getSetNames(node).forEach(function (setName) {
                 var memberPaths = core.getMemberPaths(node, setName);
-                memberPaths.forEach(function (memberPath) {
-                    promises.push(
-                        core.loadByPath(rootNode, memberPath)
-                            .then(function (memberNode) {
-                                var memberMetaNode = core.getBaseType(memberNode),
-                                    memberMetaName = core.getAttribute(memberMetaNode, 'name'),
-                                    setAttr = '@' + SET_REL_PREFIX + setName + POINTER_SET_DIV + memberMetaName;
 
-                                nodeData[setAttr] = typeof nodeData[setAttr] === 'string' ?
+                if (validSetNames.indexOf(setName) === -1) {
+                    self.logger.warn('Skipping set with no meta-definition', setName);
+                } else {
+                    memberPaths.forEach(function (memberPath) {
+                        promises.push(
+                            core.loadByPath(rootNode, memberPath)
+                                .then(function (memberNode) {
+                                    var memberMetaNode = core.getBaseType(memberNode),
+                                        memberMetaName = core.getAttribute(memberMetaNode, 'name'),
+                                        setAttr = '@' + SET_REL_PREFIX + self.sanitizeName(setName) + POINTER_SET_DIV +
+                                            self.sanitizeName(memberMetaName);
+
+                                    nodeData[setAttr] = typeof nodeData[setAttr] === 'string' ?
                                     nodeData[setAttr] + ' ' + core.getGuid(memberNode) : core.getGuid(memberNode);
-                            })
-                    );
-                });
+                                })
+                        );
+                    });
+                }
 
             });
 
             core.getCollectionNames(node).forEach(function (collectionName) {
                 var collectionPaths = core.getCollectionPaths(node, collectionName);
-                if (collectionName === 'base') {
-                    return;
+                if (validPointerNames.indexOf(collectionName) === -1) {
+                    self.logger.warn('Skipping collection with no meta-definition', collectionName);
+                } else {
+                    collectionPaths.forEach(function (collectionPath) {
+                        promises.push(
+                            core.loadByPath(rootNode, collectionPath)
+                                .then(function (collectionNode) {
+                                    var collectionMetaNode = core.getBaseType(collectionNode),
+                                        collectionMetaName = core.getAttribute(collectionMetaNode, 'name'),
+                                        collectionAttr =
+                                            '@' + INV_REL_PREFIX + self.sanitizeName(collectionName) + POINTER_SET_DIV +
+                                            self.sanitizeName(collectionMetaName);
+
+                                    nodeData[collectionAttr] = typeof nodeData[collectionAttr] === 'string' ?
+                                    nodeData[collectionAttr] + ' ' + core.getGuid(collectionNode) :
+                                        core.getGuid(collectionNode);
+                                })
+                        );
+                    });
                 }
-                collectionPaths.forEach(function (collectionPath) {
-                    promises.push(
-                        core.loadByPath(rootNode, collectionPath)
-                            .then(function (collectionNode) {
-                                var collectionMetaNode = core.getBaseType(collectionNode),
-                                    collectionMetaName = core.getAttribute(collectionMetaNode, 'name'),
-                                    collectionAttr =
-                                        '@' + INV_REL_PREFIX + collectionName + POINTER_SET_DIV + collectionMetaName;
-
-                                nodeData[collectionAttr] = typeof nodeData[collectionAttr] === 'string' ?
-                                nodeData[collectionAttr] + ' ' + core.getGuid(collectionNode) :
-                                    core.getGuid(collectionNode);
-                            })
-                    );
-                });
-
             });
 
             Q.all(promises)
@@ -517,6 +537,15 @@ define([
                 return data;
             })
             .nodeify(callback);
+    };
+
+    XMIExporter.prototype.sanitizeName = function (str) {
+        return str.replace(ILLEGAL_CHAR_REGEXP, this.config.replacementStr);
+    };
+
+    XMIExporter.prototype.encodeAttribute = function (str) {
+        // TODO: There hsould be a better way to do this..
+        return str.replace(/&/g, "&amp;").replace(/>/g, "&gt;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
     };
 
     return XMIExporter;

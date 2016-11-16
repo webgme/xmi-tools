@@ -10,5 +10,20 @@
   "disableServerSideExecution": false,
   "disableBrowserSideExecution": false,
   "writeAccessRequired": false,
-  "configStructure": []
+  "configStructure": [{
+    "name": "replacementStr",
+    "displayName": "Replacement str",
+    "description": "String or character to replace special characters (incl. spaces) with in meta, attr, pointer and set names.",
+    "value": "__",
+    "valueType": "string",
+    "readOnly": false
+  },
+    {
+      "name": "fName",
+      "displayName": "Optional file name",
+      "description": "If given will export the file to this name, if not the default name is <ROOT-Name>.xml",
+      "value": "",
+      "valueType": "string",
+      "readOnly": false
+    }]
 }
