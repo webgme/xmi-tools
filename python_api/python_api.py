@@ -1,5 +1,3 @@
-import pprint
-
 try:
     import xml.etree.cElementTree as ET
 except ImportError:
@@ -9,6 +7,7 @@ class Node:
     def __init__(self, el, root=None):
         self._atr_prefix = 'atr-'
         self._ptr_prefix = 'rel-'
+        self._set_prefix = 'set-'
         self._invptr_prefix = 'invrel-'
         self._el = el
         if root:
@@ -16,11 +15,11 @@ class Node:
         else:
             self._root = self
 
-    def _el_to_node(self, el):
+    def _el_to_node(self, el, root):
         return Node(el, self._root)
 
     def _els_to_nodes(self, els):
-        return map(lambda x: self._el_to_node(x), els)
+        return map(lambda x: self._el_to_node(x, self._root), els)
 
     def get_root(self):
         return self._root
@@ -58,19 +57,6 @@ class Node:
                     return childPath
             return None
 
-    def _get_partial_path(self, end, nlist):
-        print self.get_relid(), end.get_relid()
-        if self.get_relid() == end.get_relid():
-            print "ab"
-            return nlist
-        children = self.get_children()
-        if children:
-            for child in children:
-                print "ac"
-                return child._get_partial_path(end, nlist+[self.get_relid()])
-        # else:
-        #     return None
-
     def is_meta_node(self):
         return self._el.get('isMeta') == 'true'
 
@@ -94,7 +80,7 @@ class Node:
         if relid is None:
             return None
         else:
-            return '/' + relid
+            return '/' + self._el.get('relid')
 
     def get_guid(self):
         return self._el.get('id')
@@ -105,14 +91,14 @@ class Node:
         if el is None:
             return None
         else:
-            return self._el_to_node(el)
+            return self._el_to_node(el, self._root)
 
     def get_node_by_guid(self, guid):
         el = self._get_el_by_guid(self._el, guid)
         if el is None:
             return None
         else:
-            return self._el_to_node(el)
+            return self._el_to_node(el, self._root)
 
     def get_child_by_relid(self, relid):
         nodes = self._get_children_by_el_attrib('relid', relid)
@@ -169,6 +155,13 @@ class Node:
         else:
             return self.get_base()
 
+    def get_set_names(self):
+        prefix = self._set_prefix
+        return map(lambda x: x[len(prefix):x.rfind('-')], filter(lambda x: x.startswith(prefix), self._el.attrib) )
+
+    def get_members(self):
+    	pass
+
     def print_node(self, tab):
         print tab, self.get_attribute('name')
         print tab, '  relid', self.get_relid()
@@ -209,17 +202,17 @@ class Core:
 
 def mini_project_2(root_node):
     structure = dict()
-    structure['3-isMeta'] = root_node.is_meta_node()
-    structure['4-metaType'] = root_node.get_meta_node().get_attribute('name')
+    structure['isMeta'] = root_node.is_meta_node()
+    structure['metaType'] = root_node.get_meta_node().get_attribute('name')
     for attr_name in root_node.get_attribute_names():
-        structure['1-' + attr_name] = root_node.get_attribute(attr_name)
+        structure[attr_name] = root_node.get_attribute(attr_name)
     for ptr_name in root_node.get_pointer_names():
-        structure['2-' + ptr_name] = root_node.get_pointer(ptr_name).get_attribute('name')
+        structure[ptr_name] = root_node.get_pointer(ptr_name).get_attribute('name')
     children = root_node.get_children()
     if len(children) > 0:
-        structure['5-children'] = []
+        structure['children'] = []
         for child in children:
-            structure['5-children'].append(mini_project_2(child))
+            structure['children'].append(mini_project_2(child))
     return structure
 
 def mini_project_2_meta(meta_nodes):
@@ -237,8 +230,6 @@ def mini_project_2_meta(meta_nodes):
     return res
 
 if __name__ == '__main__':
-    pp = pprint.PrettyPrinter(indent=4)
-
     core = Core('FSMSignalFlow.xmi')
     root_node = core.get_root_node()
     # core.print_tree()
@@ -247,10 +238,10 @@ if __name__ == '__main__':
     # print
 
     structure = dict()
-    structure['1-name'] = 'ROOT'
-    structure['5-children'] = []
+    structure['name'] = 'ROOT'
+    structure['children'] = []
     for child in root_node.get_children():
-        structure['5-children'].append(mini_project_2(child))
-    pp.pprint(structure)
+        structure['children'].append(mini_project_2(child))
+    print structure
     print
-    pp.pprint(mini_project_2_meta(core.get_all_meta_nodes()))
+    print mini_project_2_meta(core.get_all_meta_nodes())
