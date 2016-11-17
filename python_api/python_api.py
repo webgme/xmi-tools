@@ -135,6 +135,9 @@ class Node:
         else:
             return None
 
+    def get_collection(pointer_name):
+        pass
+
     def get_collection_names(self):
         prefix = self._invptr_prefix
         return map(lambda x: x[len(prefix):x.rfind('-')], filter(lambda x: x.startswith(prefix), self._el.attrib) )
@@ -159,7 +162,17 @@ class Node:
         prefix = self._set_prefix
         return map(lambda x: x[len(prefix):x.rfind('-')], filter(lambda x: x.startswith(prefix), self._el.attrib) )
 
-    def get_members(self):
+    def get_set_guids(self):
+        prefix = self._set_prefix
+        return map(lambda x: self._el.get(x), filter(lambda x: x.startswith(prefix), self._el.attrib) )
+
+    def get_set_nodes(self):
+        return map(lambda x: self._root.get_node_by_guid(x), self.get_set_guids())
+
+    def get_set_paths(self):
+        return map(lambda x: x.get_path(), self.get_set_nodes())
+
+    def get_members(set_name):
     	pass
 
     def print_node(self, tab):
