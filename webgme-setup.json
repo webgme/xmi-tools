@@ -4,6 +4,10 @@
       "XMIExporter": {
         "src": "src/plugins/XMIExporter",
         "test": "test/plugins/XMIExporter"
+      },
+      "PythonPlugin": {
+        "src": "src/plugins/PythonPlugin",
+        "test": "test/plugins/PythonPlugin"
       }
     }
   },
