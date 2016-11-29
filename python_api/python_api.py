@@ -21,9 +21,6 @@ class Node:
     def _els_to_nodes(self, els):
         return map(lambda x: self._el_to_node(x), els)
 
-    def get_root(self):
-        return Node._root
-
     def _get_children_by_el_attrib(self, attrib, val):
         nodes = filter(lambda x: x.get(attrib) == val, self._el)
         return self._els_to_nodes(nodes)
@@ -57,6 +54,9 @@ class Node:
                     return childPath
             return None
 
+    def get_root(self):
+        return Node._root
+
     def is_meta_node(self):
         return self._el.get('isMeta') == 'true'
 
@@ -77,10 +77,7 @@ class Node:
 
     def get_relid(self):
         relid = self._el.get('relid')
-        if relid is None:
-            return None
-        else:
-            return '/' + relid
+        return relid
 
     def get_guid(self):
         return self._el.get('id')

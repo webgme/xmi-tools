@@ -1,6 +1,6 @@
 import sys
 import pprint
-from python_api import Core, Node
+from python_api import Core
 
 def mini_project_2(root_node):
     structure = dict()
@@ -12,9 +12,9 @@ def mini_project_2(root_node):
         structure['2-' + ptr_name] = root_node.get_pointer_node(ptr_name).get_attribute('name')
     children = root_node.get_children()
     if len(children) > 0:
-        structure['5-children'] = []
+        structure['5-children'] = dict()
         for child in children:
-            structure['5-children'].append(mini_project_2(child))
+            structure['5-children'][child.get_relid()] = mini_project_2(child)
     return structure
 
 def mini_project_2_meta(meta_nodes):
@@ -40,9 +40,9 @@ if __name__ == '__main__':
 
     structure = dict()
     structure['1-name'] = 'ROOT'
-    structure['5-children'] = []
+    structure['5-children'] = dict()
     for child in root_node.get_children():
-        structure['5-children'].append(mini_project_2(child))
+        structure['5-children'][child.get_relid()] = mini_project_2(child)
     pp.pprint(structure)
     print
     pp.pprint(mini_project_2_meta(core.get_all_meta_nodes()))

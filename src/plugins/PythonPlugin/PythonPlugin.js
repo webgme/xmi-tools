@@ -63,6 +63,8 @@ define([
         // These are all instantiated at this point.
         var self = this,
             jsonToXml = new converters.JsonToXml(),
+            languageName = self.core.getAttribute(self.rootNode, 'name'),
+            fName = self.getCurrentConfig().fname || languageName + '.xml',
             obj = {
                 logger: self.logger,
                 sanitizeName: function (str) {
@@ -81,19 +83,17 @@ define([
 
         XMIExporter.prototype.getXMIData.call(obj, self.core, self.rootNode, self.META)
             .then(function (xmiData) {
-                var languageName = self.core.getAttribute(self.rootNode, 'name'),
-                    fName = 'python.xml',
+                var fs = require('fs'),
                     xData = {};
 
                 //eData['ecore:EPackage'] = ecoreData;
                 xData[languageName + ':' + 'ROOT'] = xmiData;
 
-                var fs = require('fs');
                 return Q.ninvoke(fs, 'writeFile', fName, jsonToXml.convertToString(xData));
             })
             .then(function () {
                 var exec = require('child-process-promise').exec;
-                return exec('python src/plugins/PythonPlugin/PythonPlugin.py python.xml');
+                return exec('python src/plugins/PythonPlugin/PythonPlugin.py ' + fName);
             })
             .then(function(result) {
                 var stdout = result.stdout;
