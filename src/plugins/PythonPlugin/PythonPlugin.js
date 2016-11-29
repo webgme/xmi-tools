@@ -11,12 +11,16 @@ define([
     'plugin/PluginConfig',
     'text!./metadata.json',
     'plugin/PluginBase',
-    '../XMIExporter/XMIExporter'
+    'plugin/XMIExporter/XMIExporter/XMIExporter',
+    'common/util/xmljsonconverter',
+    'q'
 ], function (
     PluginConfig,
     pluginMetadata,
     PluginBase,
-    XMIExporter) {
+    XMIExporter,
+    converters,
+    Q) {
     'use strict';
 
     pluginMetadata = JSON.parse(pluginMetadata);
@@ -58,24 +62,45 @@ define([
         // Use self to access core, project, result, logger etc from PluginBase.
         // These are all instantiated at this point.
         var self = this,
-            nodeObject;
+            jsonToXml = new converters.JsonToXml(),
+            obj = {
+                logger: self.logger,
+                sanitizeName: function (str) {
+                    return str.replace(/[^a-zA-Z0-9]/g, '__');
+                },
+                encodeAttribute: function (str) {
+                    // TODO: There hsould be a better way to do this..
+                    if (typeof str === 'string') {
+                        return str.replace(/&/g, "&amp;").replace(/>/g, "&gt;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+                    }
+                    else {
+                        return str;
+                    }
+                }
+            };
 
-
-        XMIExporter.getXMIData(self.core, self.rootNode, self.META)
+        XMIExporter.prototype.getXMIData.call(obj, self.core, self.rootNode, self.META)
             .then(function (xmiData) {
                 var languageName = self.core.getAttribute(self.rootNode, 'name'),
-                    ecoreData = self.getEcoreData(self.core, self.rootNode, self.META),
-                    eData = {},
-                    fName = self.config.fName || languageName + '.xml',
+                    fName = 'python.xml',
                     xData = {};
 
                 //eData['ecore:EPackage'] = ecoreData;
-                xData[languageName + ':' + ROOT_NAME] = xmiData;
+                xData[languageName + ':' + 'ROOT'] = xmiData;
 
-                return self.saveFile(fName, jsonToXml.convertToString(xData));
+                var fs = require('fs');
+                return Q.ninvoke(fs, 'writeFile', fName, jsonToXml.convertToString(xData));
             })
             .then(function () {
-                self.result.setSuccess(true);
+                var exec = require('child-process-promise').exec;
+                return exec('python src/plugins/PythonPlugin/PythonPlugin.py python.xml');
+            })
+            .then(function(result) {
+                var stdout = result.stdout;
+                if (stdout) {
+                    self.createMessage(null, stdout);
+                    self.result.setSuccess(true);
+                }
                 callback(null, self.result);
             })
             .catch(function (err) {

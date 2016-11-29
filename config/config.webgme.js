@@ -21,6 +21,5 @@ config.plugin.basePaths.push('src/plugins');
 
 
 config.mongo.uri = 'mongodb://127.0.0.1:27017/xmi_tools';
-config.plugin.allowServerExecution = true;
 validateConfig(config);
 module.exports = config;
