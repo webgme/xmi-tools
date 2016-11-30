@@ -12,14 +12,12 @@ define([
     'text!./metadata.json',
     'plugin/PluginBase',
     'plugin/XMIExporter/XMIExporter/XMIExporter',
-    'common/util/xmljsonconverter',
     'q'
 ], function (
     PluginConfig,
     pluginMetadata,
     PluginBase,
     XMIExporter,
-    converters,
     Q) {
     'use strict';
 
@@ -59,48 +57,27 @@ define([
      * @param {function(string, plugin.PluginResult)} callback - the result callback
      */
     PythonPlugin.prototype.main = function (callback) {
-        // Use self to access core, project, result, logger etc from PluginBase.
-        // These are all instantiated at this point.
         var self = this,
-            jsonToXml = new converters.JsonToXml(),
             languageName = self.core.getAttribute(self.rootNode, 'name'),
-            fName = self.getCurrentConfig().fname || languageName + '.xml',
-            obj = {
-                logger: self.logger,
-                sanitizeName: function (str) {
-                    return str.replace(/[^a-zA-Z0-9]/g, '__');
-                },
-                encodeAttribute: function (str) {
-                    // TODO: There hsould be a better way to do this..
-                    if (typeof str === 'string') {
-                        return str.replace(/&/g, "&amp;").replace(/>/g, "&gt;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-                    }
-                    else {
-                        return str;
-                    }
-                }
-            };
+            fName = languageName + '.xml';
 
-        XMIExporter.prototype.getXMIData.call(obj, self.core, self.rootNode, self.META)
-            .then(function (xmiData) {
-                var fs = require('fs'),
-                    xData = {};
-
-                //eData['ecore:EPackage'] = ecoreData;
-                xData[languageName + ':' + 'ROOT'] = xmiData;
-
-                return Q.ninvoke(fs, 'writeFile', fName, jsonToXml.convertToString(xData));
+        XMIExporter.getXMLStr(self, '__')
+            .then(function (xmlStr) {
+                var fs = require('fs');
+                return Q.ninvoke(fs, 'writeFile', fName, xmlStr);
             })
             .then(function () {
                 var exec = require('child-process-promise').exec;
                 return exec('python src/plugins/PythonPlugin/PythonPlugin.py ' + fName);
             })
-            .then(function(result) {
+            .then(function (result) {
                 var stdout = result.stdout;
+
                 if (stdout) {
                     self.createMessage(null, stdout);
                     self.result.setSuccess(true);
                 }
+
                 callback(null, self.result);
             })
             .catch(function (err) {

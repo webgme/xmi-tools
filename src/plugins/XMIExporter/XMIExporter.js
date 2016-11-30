@@ -48,6 +48,38 @@ define([
 
     pluginMetadata = JSON.parse(pluginMetadata);
 
+    function sanitizeName(str, replacementStr) {
+        return str.replace(ILLEGAL_CHAR_REGEXP, replacementStr);
+    }
+
+    function encodeAttribute(str) {
+        if (typeof str === 'string') {
+            // TODO: There hsould be a better way to do this..
+            return str.replace(/&/g, "&amp;").replace(/>/g, "&gt;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+        } else {
+            return str;
+        }
+    }
+
+    function getPtrAttr(name, metaType, replacementStr) {
+        return '@' + REL_PREFIX + sanitizeName(name, replacementStr) + POINTER_SET_DIV +
+            sanitizeName(metaType, replacementStr);
+    }
+
+    function getSetAttr(name, metaType, replacementStr) {
+        return '@' + SET_REL_PREFIX + sanitizeName(name, replacementStr) + POINTER_SET_DIV +
+            sanitizeName(metaType, replacementStr);
+    }
+
+    function getCollectionAttr(name, metaType, replacementStr) {
+        return '@' + INV_REL_PREFIX + sanitizeName(name, replacementStr) + POINTER_SET_DIV +
+            sanitizeName(metaType, replacementStr);
+    }
+
+    function getAttributeAttr(name, replacementStr) {
+        return '@' + ATTR_PREFIX + sanitizeName(name, replacementStr);
+    }
+
     /**
      * Initializes a new instance of XMIExporter.
      * @class
@@ -88,11 +120,11 @@ define([
             jsonToXml = new converters.JsonToXml();
 
         self.config = self.getCurrentConfig();
-        self.getXMIData(self.core, self.rootNode, self.META)
+        self.getXMIData(self.core, self.rootNode, self.META, self.config.replacementStr)
             .then(function (xmiData) {
                 var languageName = self.core.getAttribute(self.rootNode, 'name'),
-                    ecoreData = self.getEcoreData(self.core, self.rootNode, self.META),
-                    eData = {},
+                    //ecoreData = self.getEcoreData(self.core, self.rootNode, self.META),
+                    //eData = {},
                     fName = self.config.fName || languageName + '.xml',
                     xData = {};
 
@@ -403,7 +435,31 @@ define([
         return data;
     };
 
-    XMIExporter.prototype.getXMIData = function (core, rootNode, name2MetaNode, callback) {
+    /**
+     * Method to be called from another plugin w/o an instance of this plugin.
+     * Pass in the instance of the calling plugin.
+     * @param {PluingBase} pluginInstance
+     * @param {string} [replacementStr='__']
+     * @returns {Promise}
+     */
+    XMIExporter.getXMLStr = function (pluginInstance, replacementStr) {
+        return XMIExporter.prototype.getXMIData.call(pluginInstance,
+            pluginInstance.core,
+            pluginInstance.rootNode,
+            pluginInstance.META,
+            replacementStr || '__')
+            .then(function (xmiData) {
+                var xData = {},
+                    languageName = pluginInstance.core.getAttribute(pluginInstance.rootNode, 'name'),
+                    jsonToXml = new converters.JsonToXml();
+
+                xData[languageName + ':' + ROOT_NAME] = xmiData;
+
+                return jsonToXml.convertToString(xData);
+            });
+    };
+
+    XMIExporter.prototype.getXMIData = function (core, rootNode, name2MetaNode, replacementStr, callback) {
         var self = this,
             languageName = core.getAttribute(rootNode, 'name'),
             data = {
@@ -444,11 +500,12 @@ define([
             nodeData['@' + IS_META] = node === metaNode;
 
             core.getAttributeNames(node).forEach(function (attrName) {
+                var attrAttr;
                 if (validAttributeNames.indexOf(attrName) === -1) {
                     self.logger.warn('Skipping attribute with no meta-definition', attrName);
                 } else {
-                    nodeData['@' + ATTR_PREFIX + self.sanitizeName(attrName)] =
-                        self.encodeAttribute(core.getAttribute(node, attrName));
+                    attrAttr = getAttributeAttr(attrName, replacementStr);
+                    nodeData[attrAttr] = encodeAttribute(core.getAttribute(node, attrName));
                 }
             });
 
@@ -462,14 +519,17 @@ define([
                         promises.push(
                             core.loadByPath(rootNode, targetPath)
                                 .then(function (targetNode) {
+                                    var targetMetaNode,
+                                        targetMetaName,
+                                        attr;
+
                                     if (ptrName === 'base') {
                                         nodeData['@' + BASE] = core.getGuid(targetNode);
                                     } else {
-                                        var targetMetaNode = core.getBaseType(targetNode),
-                                            targetMetaName = core.getAttribute(targetMetaNode, 'name');
-
-                                        nodeData['@' + REL_PREFIX + self.sanitizeName(ptrName) + POINTER_SET_DIV +
-                                        self.sanitizeName(targetMetaName)] = core.getGuid(targetNode);
+                                        targetMetaNode = core.getBaseType(targetNode);
+                                        targetMetaName = core.getAttribute(targetMetaNode, 'name');
+                                        attr = getPtrAttr(ptrName, targetMetaName);
+                                        nodeData[attr] = core.getGuid(targetNode);
                                     }
                                 })
                         );
@@ -489,8 +549,7 @@ define([
                                 .then(function (memberNode) {
                                     var memberMetaNode = core.getBaseType(memberNode),
                                         memberMetaName = core.getAttribute(memberMetaNode, 'name'),
-                                        setAttr = '@' + SET_REL_PREFIX + self.sanitizeName(setName) + POINTER_SET_DIV +
-                                            self.sanitizeName(memberMetaName);
+                                        setAttr = getSetAttr(setName, memberMetaName, replacementStr);
 
                                     nodeData[setAttr] = typeof nodeData[setAttr] === 'string' ?
                                     nodeData[setAttr] + ' ' + core.getGuid(memberNode) : core.getGuid(memberNode);
@@ -503,8 +562,8 @@ define([
 
             core.getCollectionNames(node).forEach(function (collectionName) {
                 var collectionPaths = core.getCollectionPaths(node, collectionName);
-                if (validPointerNames.indexOf(collectionName) === -1) {
-                    self.logger.warn('Skipping collection with no meta-definition', collectionName);
+                if (collectionName === 'base') {
+                    self.logger.debug('Skipping base collections');
                 } else {
                     collectionPaths.forEach(function (collectionPath) {
                         promises.push(
@@ -512,9 +571,8 @@ define([
                                 .then(function (collectionNode) {
                                     var collectionMetaNode = core.getBaseType(collectionNode),
                                         collectionMetaName = core.getAttribute(collectionMetaNode, 'name'),
-                                        collectionAttr =
-                                            '@' + INV_REL_PREFIX + self.sanitizeName(collectionName) + POINTER_SET_DIV +
-                                            self.sanitizeName(collectionMetaName);
+                                        collectionAttr = getCollectionAttr(collectionName, collectionMetaName,
+                                            replacementStr);
 
                                     nodeData[collectionAttr] = typeof nodeData[collectionAttr] === 'string' ?
                                     nodeData[collectionAttr] + ' ' + core.getGuid(collectionNode) :
@@ -537,15 +595,6 @@ define([
                 return data;
             })
             .nodeify(callback);
-    };
-
-    XMIExporter.prototype.sanitizeName = function (str) {
-        return str.replace(ILLEGAL_CHAR_REGEXP, this.config.replacementStr);
-    };
-
-    XMIExporter.prototype.encodeAttribute = function (str) {
-        // TODO: There hsould be a better way to do this..
-        return str.replace(/&/g, "&amp;").replace(/>/g, "&gt;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
     };
 
     return XMIExporter;
